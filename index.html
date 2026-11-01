@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tractor Clutch Pro</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: #fff; margin: 0; padding: 15px; text-align: center; user-select: none; }
+        .card { background: #1e1e1e; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        button { border: none; border-radius: 8px; padding: 12px 20px; font-size: 16px; font-weight: bold; cursor: pointer; margin: 5px; transition: 0.2s; touch-action: manipulation; }
+        .btn-blue { background: #2196F3; color: white; }
+        .btn-green { background: #4CAF50; color: white; }
+        .btn-red { background: #f44336; color: white; }
+        .btn-purple { background: #9C27B0; color: white; }
+        .btn-jog { background: #444; color: white; padding: 20px 30px; font-size: 22px; border-radius: 12px; box-shadow: 0 4px #222; margin: 10px;}
+        .btn-jog:active { background: #666; transform: translateY(4px); }
+        input[type=range] { width: 100%; margin: 15px 0; accent-color: #2196F3; }
+        
+        .gauge-container { position: relative; width: 250px; height: 250px; margin: 0 auto 10px auto; }
+        svg { filter: drop-shadow(0px 0px 8px rgba(33, 150, 243, 0.3)); }
+        .gauge-center-text { position: absolute; top: 60%; left: 50%; transform: translate(-50%, -50%); font-size: 24px; font-weight: bold; color: #fff; }
+        .gauge-sub-text { position: absolute; top: 78%; left: 50%; transform: translate(-50%, -50%); font-size: 13px; color: #ff9800; font-weight: bold; }
+        
+        #jogPanel { display: none; background: #2a2a2a; padding: 15px; border-radius: 10px; border: 2px dashed #ff9800;}
+        progress { width: 100%; height: 20px; margin-top: 10px; accent-color: #9C27B0; }
+    </style>
+</head>
+<body>
+
+    <h2>🚜 Tractor Clutch Pro</h2>
+    
+    <div class="card">
+        <button id="connectBtn" class="btn-blue" onclick="connectBLE()">🔗 Connetti Bluetooth</button>
+        <button id="powerBtn" class="btn-red" onclick="togglePower()" disabled>🛑 SPEGNI SISTEMA</button>
+        <p id="status" style="margin-top: 10px; font-size: 14px; color: #aaa;">Stato: Disconnesso</p>
+    </div>
+
+    <!-- AGGIORNAMENTO FIRMWARE OTA -->
+    <div class="card" style="border: 1px solid #9C27B0;">
+        <h3 style="color: #E1BEE7;">📲 Aggiornamento Firmware OTA</h3>
+        <p style="font-size: 14px;">Versione ESP32: <b id="fwVersion" style="color: #4CAF50;">--</b></p>
+        <input type="file" id="fileBin" accept=".bin" style="display: none;" onchange="updateFileName()">
+        <button class="btn-purple" onclick="document.getElementById('fileBin').click()">📁 Seleziona File .bin</button>
+        <p id="fileName" style="font-size: 12px; color: #aaa; margin: 5px 0;">Nessun file selezionato</p>
+        <button id="btnFlash" class="btn-green" onclick="startOtaUpload()" disabled>⚡ Avvia Flash Bluetooth</button>
+        <progress id="otaProgress" value="0" max="100" style="display: none;"></progress>
+        <p id="otaStatus" style="font-size: 13px; color: #E1BEE7; margin-top: 5px;"></p>
+    </div>
+
+    <div class="card">
+        <h3>Stato Frizione</h3>
+        <div class="gauge-container">
+            <svg width="250" height="250" viewBox="0 0 200 200">
+                <path d="M 30 170 A 90 90 0 1 1 170 170" fill="none" stroke="#333" stroke-width="12" stroke-linecap="round"/>
+                <path d="M 30 170 A 90 90 0 1 1 170 170" fill="none" stroke="#555" stroke-width="12" stroke-dasharray="2 12" stroke-linecap="round"/>
+                <line id="lineTarget" x1="100" y1="100" x2="100" y2="15" stroke="#2196F3" stroke-width="8" stroke-linecap="round" transform="rotate(-135 100 100)" opacity="0.6"/>
+                <line id="lineActual" x1="100" y1="100" x2="100" y2="25" stroke="#4CAF50" stroke-width="5" stroke-linecap="round" transform="rotate(-135 100 100)"/>
+                <circle cx="100" cy="100" r="8" fill="#fff" />
+            </svg>
+            <div class="gauge-center-text" id="valDegrees">0.0°</div>
+            <div class="gauge-sub-text" id="valDirection">Corsa: --</div>
+        </div>
+        <p style="font-size: 14px; color: #888;">Cella di Carico: <span id="valWeight" style="color: #fff;">0</span> RAW</p>
+    </div>
+
+    <div class="card" id="jogPanel">
+        <h3 style="color: #ff9800;">⚙️ Calibrazione Manuale</h3>
+        <button class="btn-jog" onmousedown="sendBLE('JOG_REV')" onmouseup="sendBLE('JOG_STOP')" ontouchstart="sendBLE('JOG_REV')" ontouchend="sendBLE('JOG_STOP')">⬅️</button>
+        <button class="btn-jog" onmousedown="sendBLE('JOG_FWD')" onmouseup="sendBLE('JOG_STOP')" ontouchstart="sendBLE('JOG_FWD')" ontouchend="sendBLE('JOG_STOP')">➡️</button>
+    </div>
+
+    <div class="card">
+        <h3>Salvataggio Punti</h3>
+        <button class="btn-green" onclick="sendBLE('SET_CELL_MIN')">1. Zero Pedale</button>
+        <button class="btn-red" onclick="sendBLE('SET_CELL_MAX')">2. Max Pedale</button>
+        <br><br>
+        <button class="btn-green" onclick="sendBLE('SET_MOT_MIN')">3. Zero Motore</button>
+        <button class="btn-red" onclick="sendBLE('SET_MOT_MAX')">4. Max Motore</button>
+    </div>
+
+    <div class="card">
+        <h3>Impostazioni PID</h3>
+        <label>Sensibilità (Kp): <span id="valKp" style="color: #2196F3; font-weight: bold;">3.5</span></label>
+        <input type="range" id="slideKp" min="0" max="10" step="0.1" value="3.5" onchange="sendBLE('KP:' + this.value)">
+        
+        <label>Freno Inerzia (Kd): <span id="valKd" style="color: #2196F3; font-weight: bold;">0.8</span></label>
+        <input type="range" id="slideKd" min="0" max="5" step="0.1" value="0.8" onchange="sendBLE('KD:' + this.value)">
+        
+        <label>Zona Morta: <span id="valDb" style="color: #2196F3; font-weight: bold;">80</span></label>
+        <input type="range" id="slideDb" min="0" max="300" step="5" value="80" onchange="sendBLE('DB:' + this.value)">
+    </div>
+
+    <script>
+        let myCharacteristicRx, myCharacteristicTx, myCharacteristicOta;
+        let isSystemActive = true;
+
+        async function connectBLE() {
+            try {
+                document.getElementById('status').innerText = "Ricerca trattore...";
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'Trattore_Frizione' }],
+                    optionalServices: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b']
+                });
+                
+                device.addEventListener('gattserverdisconnected', () => {
+                    document.getElementById('status').innerText = "Disconnesso!";
+                    document.getElementById('status').style.color = "#f44336";
+                    document.getElementById('powerBtn').disabled = true;
+                });
+
+                const server = await device.gatt.connect();
+                const service = await server.getPrimaryService('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
+                
+                myCharacteristicTx = await service.getCharacteristic('beb5483f-36e1-4688-b7f5-ea07361b26a8');
+                myCharacteristicRx = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+                myCharacteristicOta = await service.getCharacteristic('beb54840-36e1-4688-b7f5-ea07361b26a8');
+                
+                await myCharacteristicTx.startNotifications();
+                myCharacteristicTx.addEventListener('characteristicvaluechanged', handleTelemetry);
+                
+                document.getElementById('status').innerText = "Connesso 🟢";
+                document.getElementById('status').style.color = "#4CAF50";
+                document.getElementById('powerBtn').disabled = false;
+
+                setTimeout(() => { sendBLE('SYNC_REQ'); }, 500);
+
+            } catch (error) {
+                document.getElementById('status').innerText = "Errore: " + error;
+            }
+        }
+
+        function handleTelemetry(event) {
+            let value = new TextDecoder().decode(event.target.value);
+            try {
+                let data = JSON.parse(value);
+                
+                if (data.sync) {
+                    document.getElementById('fwVersion').innerText = data.ver || "2.3.0";
+                    document.getElementById('slideKp').value = data.kp; document.getElementById('valKp').innerText = data.kp;
+                    document.getElementById('slideKd').value = data.kd; document.getElementById('valKd').innerText = data.kd;
+                    document.getElementById('slideDb').value = data.db; document.getElementById('valDb').innerText = data.db;
+                    return;
+                }
+
+                document.getElementById('valWeight').innerText = data.w;
+                let degreesActual = (data.a * 360.0) / 16384.0;
+                document.getElementById('valDegrees').innerText = degreesActual.toFixed(1) + "°";
+                
+                let maxStroke = data.m || 8192;
+                let maxDegrees = (maxStroke * 360.0) / 16384.0;
+                document.getElementById('valDirection').innerText = `${Math.abs(maxDegrees).toFixed(0)}° (${maxStroke >= 0 ? "Orario ↻" : "Antiorario ↺"})`;
+
+                let pctTarget = Math.max(0, Math.min(1, data.t / maxStroke));
+                let pctActual = Math.max(0, Math.min(1, data.a / maxStroke));
+                
+                document.getElementById('lineTarget').setAttribute('transform', `rotate(${-135 + (pctTarget * 270)} 100 100)`);
+                document.getElementById('lineActual').setAttribute('transform', `rotate(${-135 + (pctActual * 270)} 100 100)`);
+
+            } catch(e) {}
+        }
+
+        async function sendBLE(cmd) {
+            if (!myCharacteristicRx) return;
+            const encoder = new TextEncoder();
+            await myCharacteristicRx.writeValue(encoder.encode(cmd));
+        }
+
+        function updateFileName() {
+            let file = document.getElementById('fileBin').files[0];
+            if (file) {
+                document.getElementById('fileName').innerText = file.name + " (" + (file.size / 1024).toFixed(1) + " KB)";
+                document.getElementById('btnFlash').disabled = false;
+            }
+        }
+
+        async function startOtaUpload() {
+            let file = document.getElementById('fileBin').files[0];
+            if (!file || !myCharacteristicOta) return;
+
+            let reader = new FileReader();
+            reader.onload = async function(e) {
+                let buffer = e.target.result;
+                let byteArray = new Uint8Array(buffer);
+                let totalBytes = byteArray.length;
+                let chunkSize = 200; // Byte per pacchetto BLE MTU
+                
+                document.getElementById('otaProgress').style.display = "block";
+                document.getElementById('otaStatus').innerText = "Inizio caricamento...";
+                document.getElementById('btnFlash').disabled = true;
+
+                // Avviso inizio OTA con dimensione totale
+                await sendBLE("OTA_START:" + totalBytes);
+                await new Promise(r => setTimeout(r, 500));
+
+                for (let i = 0; i < totalBytes; i += chunkSize) {
+                    let chunk = byteArray.slice(i, i + chunkSize);
+                    await myCharacteristicOta.writeValue(chunk);
+                    
+                    let pct = Math.round(((i + chunk.length) / totalBytes) * 100);
+                    document.getElementById('otaProgress').value = pct;
+                    document.getElementById('otaStatus').innerText = `Scrittura: ${pct}% (${i + chunk.length}/${totalBytes} byte)`;
+                }
+
+                document.getElementById('otaStatus').innerText = "Flash completato! Riavvio ESP32...";
+                await sendBLE("OTA_END");
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function togglePower() {
+            sendBLE('TOGGLE_RUN');
+            isSystemActive = !isSystemActive;
+            document.getElementById('powerBtn').innerText = isSystemActive ? "🛑 SPEGNI SISTEMA" : "▶️ ACCENDI SISTEMA";
+            document.getElementById('powerBtn').className = isSystemActive ? "btn-red" : "btn-green";
+            document.getElementById('jogPanel').style.display = isSystemActive ? "none" : "block";
+        }
+    </script>
+</body>
+</html>
